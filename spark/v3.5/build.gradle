@@ -39,8 +39,22 @@ project(":trinitylake-spark:trinitylake-spark-${sparkMajorVersion}_${scalaVersio
 }
 
 project(":trinitylake-spark:trinitylake-spark-extensions-${sparkMajorVersion}_${scalaVersion}") {
+    apply plugin: 'antlr'
     apply plugin: 'java-library'
     apply plugin: 'scala'
+
+    configurations {
+        /*
+         The Gradle Antlr plugin erroneously adds both antlr-build and runtime dependencies to the runtime path. This
+         bug https://github.com/gradle/gradle/issues/820 exists because older versions of Antlr do not have separate
+         runtime and implementation dependencies and they do not want to break backwards compatibility. So to only end up with
+         the runtime dependency on the runtime classpath we remove the dependencies added by the plugin here. Then add
+         the runtime dependency back to only the runtime configuration manually.
+        */
+        implementation {
+            extendsFrom = extendsFrom.findAll { it != configurations.antlr }
+        }
+    }
 
     dependencies {
         implementation project(':trinitylake-core')
@@ -51,10 +65,16 @@ project(":trinitylake-spark:trinitylake-spark-extensions-${sparkMajorVersion}_${
 
         testImplementation project(path: ":trinitylake-spark:trinitylake-spark-${sparkMajorVersion}_${scalaVersion}")
         testImplementation libs.junit.jupiter
+        antlr libs.antlr.antlr4
     }
 
     test {
         useJUnitPlatform()
+    }
+
+    generateGrammarSource {
+        maxHeapSize = "64m"
+        arguments += ['-visitor', '-package', 'org.apache.spark.sql.catalyst.parser.extensions']
     }
 }
 
