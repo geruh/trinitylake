@@ -15,10 +15,10 @@
 package io.trinitylake.spark.extensions
 
 import org.apache.spark.sql.SparkSessionExtensions
-import org.apache.spark.sql.catalyst.parser.extensions.TrinityLakeSqlExtensionsParser
+import org.apache.spark.sql.catalyst.parser.extensions.TrinityLakeSparkSqlExtensionsParser
 
 class TrinityLakeSparkSessionExtensions extends (SparkSessionExtensions => Unit) {
     override def apply(extensions: SparkSessionExtensions): Unit = {
-        extensions.injectParser { case (_, parser) => new TrinityLakeSqlExtensionsParser(parser) }
+        extensions.injectParser { case (_, parser) => new TrinityLakeSparkSqlExtensionsParser(parser) }
     }
 }

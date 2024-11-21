@@ -13,9 +13,10 @@ import org.apache.spark.sql.types.{DataType, StructType}
 
 import scala.util.Try
 
-class TrinityLakeSqlExtensionsParser(delegate: ParserInterface) extends ParserInterface {
+class TrinityLakeSparkSqlExtensionsParser(delegate: ParserInterface) extends ParserInterface {
 
-    import TrinityLakeSqlExtensionsParser._
+    import TrinityLakeSparkSqlExtensionsParser._
+
     private lazy val astBuilder = new TrinityLakeSqlExtensionsAstBuilder(delegate)
     private lazy val substitutor = {
       Try(substitutorCtor.newInstance(SQLConf.get))
@@ -93,33 +94,14 @@ class TrinityLakeSqlExtensionsParser(delegate: ParserInterface) extends ParserIn
     }
 
     protected def parse[T](command: String)(toResult: TrinityLakeSqlExtensionsParser => T): T = {
-      val lexer = new TrinityLakeSqlExtensionsLexer(
-        new UpperCaseCharStream(CharStreams.fromString(command)))
-      lexer.removeErrorListeners()
-      //    lexer.addErrorListener(TrinityLakeParseErrorListener)
-
+      val lexer = new TrinityLakeSqlExtensionsLexer(CharStreams.fromString(command))
       val tokenStream = new CommonTokenStream(lexer)
       val parser = new TrinityLakeSqlExtensionsParser(tokenStream)
-      //    parser.addParseListener(TrinityLakePostProcessor)
-      parser.removeErrorListeners()
-      //    parser.addErrorListener(TrinityLakeParseErrorListener)
-
-      try {
-        // First try parsing with SLL mode
-        parser.getInterpreter.setPredictionMode(PredictionMode.SLL)
-        toResult(parser)
-      } catch {
-        case _: ParseCancellationException =>
-          // If SLL fails, try with LL mode
-          tokenStream.seek(0)
-          parser.reset()
-          parser.getInterpreter.setPredictionMode(PredictionMode.LL)
-          toResult(parser)
-      }
+      toResult(parser)
     }
 }
 
-object TrinityLakeSqlExtensionsParser {
+object TrinityLakeSparkSqlExtensionsParser {
   private val substitutorCtor = {
     Try(classOf[VariableSubstitution].getConstructor(classOf[SQLConf]))
       .getOrElse(classOf[VariableSubstitution].getConstructor())
