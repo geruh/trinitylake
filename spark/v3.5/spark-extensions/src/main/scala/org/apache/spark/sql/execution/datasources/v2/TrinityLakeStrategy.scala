@@ -19,7 +19,8 @@ import org.apache.spark.sql.catalyst.plans.logical.CommitTransactionCommand
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.logical.RollbackTransactionCommand
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.{SparkSession, Strategy}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.Strategy
 
 case class TrinityLakeStrategy(spark: SparkSession) extends Strategy {
 
