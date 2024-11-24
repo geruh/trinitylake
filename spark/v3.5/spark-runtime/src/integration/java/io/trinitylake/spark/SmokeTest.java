@@ -30,8 +30,6 @@ public class SmokeTest {
             .appName("SmokeTest")
             .config("spark.sql.extensions", TrinityLakeSparkSessionExtensions.class.getName())
             .getOrCreate();
-
-    spark.catalog();
   }
 
   @Test
