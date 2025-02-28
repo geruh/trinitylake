@@ -34,6 +34,19 @@ dependencies {
     testImplementation "org.apache.hadoop:hadoop-client:3.4.1"
 }
 
+configurations {
+    testArtifacts.extendsFrom testImplementation
+}
+
+tasks.register('testJar', Jar) {
+    archiveClassifier.set('test')
+    from sourceSets.test.output
+}
+
+artifacts {
+    testArtifacts testJar
+}
+
 
 protobuf {
     protoc {

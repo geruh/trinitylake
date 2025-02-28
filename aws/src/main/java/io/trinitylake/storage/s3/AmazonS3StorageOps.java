@@ -13,8 +13,6 @@
  */
 package io.trinitylake.storage.s3;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import io.trinitylake.exception.StorageDeleteFailureException;
 import io.trinitylake.exception.StorageReadFailureException;
 import io.trinitylake.relocated.com.google.common.collect.Lists;
@@ -29,13 +27,15 @@ import io.trinitylake.storage.CommonStorageOpsProperties;
 import io.trinitylake.storage.LiteralURI;
 import io.trinitylake.storage.SeekableInputStream;
 import io.trinitylake.storage.StorageOps;
+import io.trinitylake.storage.StorageOpsProperties;
 import io.trinitylake.storage.local.LocalInputStream;
-import io.trinitylake.util.FileUtil;
-import io.trinitylake.util.Pair;
-import java.io.File;
+import io.trinitylake.storage.local.LocalStorageOps;
+import io.trinitylake.storage.local.LocalStorageOpsProperties;
 import java.io.OutputStream;
 import java.net.URI;
-import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -63,7 +63,6 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
-import software.amazon.awssdk.transfer.s3.model.FileDownload;
 
 public class AmazonS3StorageOps implements StorageOps {
 
@@ -76,7 +75,7 @@ public class AmazonS3StorageOps implements StorageOps {
 
   private transient volatile S3AsyncClient s3;
   private transient volatile S3TransferManager transferManager;
-  private transient volatile Cache<LiteralURI, Pair<FileDownload, File>> preparedFiles;
+  private final LocalStorageOps localStorageOps;
 
   public AmazonS3StorageOps() {
     this(CommonStorageOpsProperties.instance(), AmazonS3StorageOpsProperties.instance());
@@ -86,18 +85,16 @@ public class AmazonS3StorageOps implements StorageOps {
       CommonStorageOpsProperties commonProperties, AmazonS3StorageOpsProperties s3Properties) {
     this.commonProperties = commonProperties;
     this.s3Properties = s3Properties;
-
+    this.localStorageOps =
+        new LocalStorageOps(commonProperties, LocalStorageOpsProperties.instance());
     initializeS3AsyncClient();
-    initializePreparedFilesCache();
   }
 
   @Override
   public void initialize(Map<String, String> properties) {
     this.commonProperties = new CommonStorageOpsProperties(properties);
     this.s3Properties = new AmazonS3StorageOpsProperties(properties);
-
     initializeS3AsyncClient();
-    initializePreparedFilesCache();
   }
 
   @Override
@@ -106,53 +103,32 @@ public class AmazonS3StorageOps implements StorageOps {
   }
 
   @Override
-  public AmazonS3StorageOpsProperties systemSpecificProperties() {
+  public StorageOpsProperties systemSpecificProperties() {
     return s3Properties;
   }
 
   @Override
   public void prepareToReadLocal(LiteralURI uri) {
-    try {
-      File tempFile =
-          FileUtil.createTempFile("s3-", commonProperties().prepareReadStagingDirectory());
-      DownloadFileRequest downloadFileRequest =
-          DownloadFileRequest.builder()
-              .getObjectRequest(b -> b.bucket(uri.authority()).key(uri.path()))
-              .destination(tempFile)
-              .build();
-      FileDownload downloadFile = transferManager().downloadFile(downloadFileRequest);
-      preparedFiles().put(uri, Pair.of(downloadFile, tempFile));
-    } catch (RuntimeException e) {
-      LOG.warn("Failed to start preparing for file: {}", uri, e);
+    LiteralURI localUri = s3ToLocalUri(uri);
+    if (!localStorageOps.exists(localUri)) {
+      downloadFromS3(uri, localUri);
     }
   }
 
   @Override
   public LocalInputStream startReadLocal(LiteralURI uri) {
-    Pair<FileDownload, File> fileDownloadResult = preparedFiles().getIfPresent(uri);
-    if (fileDownloadResult != null) {
-      prepareToReadLocal(uri);
-      fileDownloadResult = preparedFiles().getIfPresent(uri);
+    LiteralURI localUri = s3ToLocalUri(uri);
+    if (!localStorageOps.exists(localUri)) {
+      downloadFromS3(uri, localUri);
     }
-
-    try {
-      fileDownloadResult.first().completionFuture().get();
-      return new LocalInputStream(fileDownloadResult.second());
-    } catch (ExecutionException | InterruptedException e) {
-      throw new StorageReadFailureException(e);
-    }
+    return localStorageOps.startReadLocal(localUri);
   }
 
   @Override
   public SeekableInputStream startRead(LiteralURI uri) {
-    Pair<FileDownload, File> fileDownloadResult = preparedFiles().getIfPresent(uri);
-    if (fileDownloadResult != null) {
-      try {
-        fileDownloadResult.first().completionFuture().get();
-        return new LocalInputStream(fileDownloadResult.second());
-      } catch (ExecutionException | InterruptedException e) {
-        LOG.warn("Failed to prepare downloading file: {}", uri, e);
-      }
+    LiteralURI localUri = s3ToLocalUri(uri);
+    if (localStorageOps.exists(localUri)) {
+      localStorageOps.startRead(localUri);
     }
     LOG.info("Start read without preparation, directly open S3 object: {}", uri);
     return new S3InputStream(s3(), uri);
@@ -173,12 +149,14 @@ public class AmazonS3StorageOps implements StorageOps {
 
   @Override
   public AtomicOutputStream startCommit(LiteralURI uri) {
-    return new S3AtomicOutputStream(s3(), uri, commonProperties, s3Properties);
+    LiteralURI localUri = s3ToLocalUri(uri);
+    return new S3AtomicOutputStream(s3(), localUri, uri, commonProperties, s3Properties);
   }
 
   @Override
   public OutputStream startOverwrite(LiteralURI uri) {
-    return new S3OverwriteOutputStream(s3(), uri, commonProperties, s3Properties);
+    LiteralURI localUri = s3ToLocalUri(uri);
+    return new S3OverwriteOutputStream(s3(), localUri, uri, commonProperties, s3Properties);
   }
 
   @Override
@@ -230,6 +208,20 @@ public class AmazonS3StorageOps implements StorageOps {
     }
   }
 
+  @Override
+  public List<LiteralURI> list(LiteralURI prefix) {
+    ListObjectsV2Request request =
+        ListObjectsV2Request.builder().bucket(prefix.authority()).prefix(prefix.path()).build();
+
+    List<LiteralURI> result = Lists.newArrayList();
+    s3().listObjectsV2Paginator(request)
+        .flatMapIterable(ListObjectsV2Response::contents)
+        .map(obj -> new LiteralURI(prefix.scheme(), prefix.authority(), obj.key()))
+        .subscribe(result::add)
+        .join();
+    return result;
+  }
+
   private List<String> deleteBatch(String bucket, Collection<String> keysToDelete) {
     List<ObjectIdentifier> objectIds =
         keysToDelete.stream()
@@ -259,17 +251,15 @@ public class AmazonS3StorageOps implements StorageOps {
     return failures;
   }
 
-  @Override
-  public List<LiteralURI> list(LiteralURI prefix) {
-    ListObjectsV2Request request =
-        ListObjectsV2Request.builder().bucket(prefix.authority()).prefix(prefix.path()).build();
-
-    List<LiteralURI> result = Lists.newArrayList();
-    s3().listObjectsV2Paginator(request)
-        .flatMapIterable(ListObjectsV2Response::contents)
-        .map(obj -> new LiteralURI(prefix.scheme(), prefix.authority(), obj.key()))
-        .subscribe(result::add);
-    return result;
+  private LiteralURI s3ToLocalUri(LiteralURI s3Uri) {
+    Path cacheDirPath = Paths.get(s3Properties.s3CacheDirectory());
+    String bucket = s3Uri.authority();
+    Path localPath = cacheDirPath;
+    localPath = localPath.resolve(bucket);
+    String objectKey = s3Uri.path().substring(1);
+    localPath = localPath.resolve(objectKey).toAbsolutePath();
+    LOG.debug("Mapped S3 URI {} to local path {}", s3Uri, localPath);
+    return new LiteralURI("file", "", localPath.toString());
   }
 
   private S3AsyncClient s3() {
@@ -294,17 +284,6 @@ public class AmazonS3StorageOps implements StorageOps {
     return transferManager;
   }
 
-  private Cache<LiteralURI, Pair<FileDownload, File>> preparedFiles() {
-    if (preparedFiles == null) {
-      synchronized (this) {
-        if (preparedFiles == null) {
-          initializePreparedFilesCache();
-        }
-      }
-    }
-    return preparedFiles;
-  }
-
   private void initializeS3AsyncClient() {
     S3AsyncClientBuilder builder = S3AsyncClient.builder();
     if (s3Properties.region() != null) {
@@ -313,6 +292,10 @@ public class AmazonS3StorageOps implements StorageOps {
 
     if (s3Properties.endpoint() != null) {
       builder.endpointOverride(URI.create(s3Properties.endpoint()));
+    }
+
+    if (s3Properties.pathStyleAccess() != null) {
+      builder.forcePathStyle(Boolean.valueOf(s3Properties.pathStyleAccess()));
     }
 
     if (s3Properties.accessKeyId() != null) {
@@ -334,13 +317,19 @@ public class AmazonS3StorageOps implements StorageOps {
     this.transferManager = S3TransferManager.builder().s3Client(s3).build();
   }
 
-  private void initializePreparedFilesCache() {
-    this.preparedFiles =
-        Caffeine.newBuilder()
-            .expireAfterAccess(
-                Duration.ofMillis(commonProperties.prepareReadCacheExpirationMillis()))
-            .maximumSize(commonProperties.prepareReadCacheSize())
-            .build();
+  private void downloadFromS3(LiteralURI s3Uri, LiteralURI localUri) {
+    try {
+      Path localPath = Paths.get(localUri.toString());
+      Files.createDirectories(localPath.getParent());
+      DownloadFileRequest downloadFileRequest =
+          DownloadFileRequest.builder()
+              .getObjectRequest(b -> b.bucket(s3Uri.authority()).key(s3Uri.path()))
+              .destination(localPath)
+              .build();
+      transferManager().downloadFile(downloadFileRequest).completionFuture().join();
+    } catch (Exception e) {
+      throw new StorageReadFailureException(e, "Failed to download %s from S3", s3Uri);
+    }
   }
 
   private ExecutorService executorService() {

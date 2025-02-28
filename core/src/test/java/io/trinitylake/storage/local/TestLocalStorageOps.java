@@ -13,103 +13,38 @@
  */
 package io.trinitylake.storage.local;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import io.trinitylake.relocated.com.google.common.io.CharStreams;
+import io.trinitylake.StorageOpsTests;
 import io.trinitylake.storage.LiteralURI;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import io.trinitylake.storage.StorageOps;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
 
-public class TestLocalStorageOps {
+public class TestLocalStorageOps extends StorageOpsTests {
 
-  @Test
-  public void testListing(@TempDir Path tempDir) throws IOException {
-    Path dir = tempDir.resolve("testListing");
-    boolean created = dir.toFile().mkdirs();
-    assertThat(created).isTrue();
+  @TempDir private Path tempDir;
 
-    for (int i = 0; i < 10; i++) {
-      Path file = dir.resolve("f" + i + ".txt");
-      Files.write(file, "data".getBytes());
-    }
+  private LocalStorageOps storageOps;
 
-    LocalStorageOps ops = new LocalStorageOps();
-    List<LiteralURI> results = ops.list(new LiteralURI("file://" + dir));
-    assertThat(results.size()).isEqualTo(10);
+  @BeforeEach
+  public void beforeEach() {
+    storageOps = new LocalStorageOps();
   }
 
-  @Test
-  public void testFileExists(@TempDir Path tempDir) throws IOException {
-    Path file = tempDir.resolve("exists.txt");
-    Files.write(file, "data".getBytes());
-
-    LocalStorageOps ops = new LocalStorageOps();
-    assertThat(ops.exists(new LiteralURI("file://" + file))).isTrue();
-    assertThat(ops.exists(new LiteralURI("file://" + tempDir.resolve("not-exist.txt")))).isFalse();
+  @Override
+  protected StorageOps storageOps() {
+    return storageOps;
   }
 
-  @Test
-  public void testDeleteFiles(@TempDir Path tempDir) throws IOException {
-
-    List<Path> files =
-        IntStream.range(0, 10)
-            .mapToObj(
-                i -> {
-                  try {
-                    Path file = tempDir.resolve("f" + i + ".txt");
-                    Files.write(file, "data".getBytes());
-                    return file;
-                  } catch (IOException e) {
-                    throw new RuntimeException(e);
-                  }
-                })
-            .collect(Collectors.toList());
-    files.stream().forEach(f -> assertThat(f.toFile().exists()).isTrue());
-
-    LocalStorageOps ops = new LocalStorageOps();
-    ops.delete(files.stream().map(f -> new LiteralURI("file://" + f)).collect(Collectors.toList()));
-
-    files.stream().forEach(f -> assertThat(f.toFile().exists()).isFalse());
+  @Override
+  protected LiteralURI createFileUri(String fileName) {
+    String filePath = String.format("file://%s/%s", tempDir, fileName);
+    return new LiteralURI(filePath);
   }
 
-  @Test
-  public void testReadFile(@TempDir Path tempDir) throws IOException {
-    Path file = tempDir.resolve("read.txt");
-    Files.write(file, "data".getBytes());
-    LocalStorageOps ops = new LocalStorageOps();
-    InputStream stream = ops.startRead(new LiteralURI("file://" + file));
-    assertThat(CharStreams.toString(new InputStreamReader(stream, StandardCharsets.UTF_8)))
-        .isEqualTo("data");
-  }
-
-  @Test
-  public void testReadFileLocal(@TempDir Path tempDir) throws IOException {
-    Path file = tempDir.resolve("read.txt");
-    Files.write(file, "data".getBytes());
-    LocalStorageOps ops = new LocalStorageOps();
-    InputStream stream = ops.startReadLocal(new LiteralURI("file://" + file));
-    assertThat(CharStreams.toString(new InputStreamReader(stream, StandardCharsets.UTF_8)))
-        .isEqualTo("data");
-  }
-
-  @Test
-  public void testWriteFile(@TempDir Path tempDir) throws IOException {
-    Path file = tempDir.resolve("write.txt");
-    LocalStorageOps ops = new LocalStorageOps();
-    OutputStream stream = ops.startCommit(new LiteralURI("file://" + file));
-    stream.write("data".getBytes());
-    stream.close();
-
-    assertThat(new String(Files.readAllBytes(file), StandardCharsets.UTF_8)).isEqualTo("data");
+  @Override
+  protected LiteralURI createDirectoryUri(String dirName) {
+    String path = String.format("file://%s/%s", tempDir, dirName);
+    return new LiteralURI(path);
   }
 }

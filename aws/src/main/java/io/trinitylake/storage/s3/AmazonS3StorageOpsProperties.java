@@ -27,6 +27,10 @@ public class AmazonS3StorageOpsProperties implements StorageOpsProperties {
   public static final String S3_ACCESS_KEY_ID = "s3.access-key-id";
   public static final String S3_SECRET_ACCESS_KEY = "s3.secret-access-key";
   public static final String S3_SESSION_TOKEN = "s3.session-token";
+  public static final String S3_PATH_STYLE_ACCESS = "s3.path-style-access";
+  public static final String S3_CACHE_DIRECTORY = "s3.cache-dir";
+  public static final String S3_CACHE_DIRECTORY_PATH_DEFAULT =
+      System.getProperty("java.io.tmpdir") + "/s3cache";
 
   public static final Set<String> PROPERTIES =
       ImmutableSet.<String>builder()
@@ -35,6 +39,8 @@ public class AmazonS3StorageOpsProperties implements StorageOpsProperties {
           .add(S3_ACCESS_KEY_ID)
           .add(S3_SECRET_ACCESS_KEY)
           .add(S3_SESSION_TOKEN)
+          .add(S3_PATH_STYLE_ACCESS)
+          .add(S3_CACHE_DIRECTORY)
           .build();
 
   private final Map<String, String> propertiesMap;
@@ -46,6 +52,8 @@ public class AmazonS3StorageOpsProperties implements StorageOpsProperties {
   private final String accessKeyId;
   private final String secretAccessKey;
   private final String sessionToken;
+  private final String pathStyleAccess;
+  private final String s3CacheDirectory;
 
   public AmazonS3StorageOpsProperties() {
     this(ImmutableMap.of());
@@ -58,6 +66,9 @@ public class AmazonS3StorageOpsProperties implements StorageOpsProperties {
     this.accessKeyId = PropertyUtil.propertyAsNullableString(input, S3_ACCESS_KEY_ID);
     this.secretAccessKey = PropertyUtil.propertyAsNullableString(input, S3_SECRET_ACCESS_KEY);
     this.sessionToken = PropertyUtil.propertyAsNullableString(input, S3_SESSION_TOKEN);
+    this.pathStyleAccess = PropertyUtil.propertyAsNullableString(input, S3_PATH_STYLE_ACCESS);
+    this.s3CacheDirectory =
+        PropertyUtil.propertyAsString(input, S3_CACHE_DIRECTORY, S3_CACHE_DIRECTORY_PATH_DEFAULT);
   }
 
   public static AmazonS3StorageOpsProperties instance() {
@@ -87,5 +98,13 @@ public class AmazonS3StorageOpsProperties implements StorageOpsProperties {
 
   public String sessionToken() {
     return sessionToken;
+  }
+
+  public String pathStyleAccess() {
+    return pathStyleAccess;
+  }
+
+  public String s3CacheDirectory() {
+    return s3CacheDirectory;
   }
 }

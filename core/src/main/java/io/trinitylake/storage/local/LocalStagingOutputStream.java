@@ -31,7 +31,7 @@ public abstract class LocalStagingOutputStream extends OutputStream {
   private static final Logger LOG = LoggerFactory.getLogger(LocalStagingOutputStream.class);
 
   private final Path targetFilePath;
-  private final File stagingFile;
+  private final Path stagingFilePath;
   private final FileOutputStream stream;
 
   protected LocalStagingOutputStream(
@@ -39,7 +39,8 @@ public abstract class LocalStagingOutputStream extends OutputStream {
       CommonStorageOpsProperties commonProperties,
       LocalStorageOpsProperties localProperties) {
     this.targetFilePath = targetFilePath;
-    this.stagingFile = FileUtil.createTempFile("local-", commonProperties.writeStagingDirectory());
+    File stagingFile = FileUtil.createTempFile("local-", commonProperties.writeStagingDirectory());
+    this.stagingFilePath = stagingFile.toPath();
     LOG.debug("Created temporary file for staging write: {}", stagingFile);
     try {
       this.stream = new FileOutputStream(stagingFile);
@@ -68,7 +69,7 @@ public abstract class LocalStagingOutputStream extends OutputStream {
     stream.flush();
   }
 
-  protected FileChannel getChannel() {
+  public FileChannel getChannel() {
     return stream.getChannel();
   }
 
@@ -77,7 +78,7 @@ public abstract class LocalStagingOutputStream extends OutputStream {
   }
 
   protected Path getStagingFilePath() {
-    return stagingFile.toPath();
+    return stagingFilePath;
   }
 
   protected void createParentDirectories() throws IOException {

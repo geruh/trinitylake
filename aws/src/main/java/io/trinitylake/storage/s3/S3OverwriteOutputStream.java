@@ -13,45 +13,33 @@
  */
 package io.trinitylake.storage.s3;
 
-import io.trinitylake.exception.StorageWriteFailureException;
 import io.trinitylake.storage.CommonStorageOpsProperties;
 import io.trinitylake.storage.LiteralURI;
 import java.io.IOException;
-import java.util.concurrent.ExecutionException;
-import software.amazon.awssdk.core.async.AsyncRequestBody;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 public class S3OverwriteOutputStream extends S3StagingOutputStream {
   public S3OverwriteOutputStream(
       S3AsyncClient s3,
-      LiteralURI uri,
+      LiteralURI localUri,
+      LiteralURI s3Uri,
       CommonStorageOpsProperties commonProperties,
       AmazonS3StorageOpsProperties s3Properties) {
-    super(s3, uri, commonProperties, s3Properties);
+    super(s3, localUri, s3Uri, commonProperties, s3Properties);
   }
 
   @Override
   protected void commit() throws IOException {
-    if (isClosed()) {
-      return;
-    }
+    createParentDirectories();
+    Files.move(getStagingFilePath(), getTargetFilePath(), StandardCopyOption.REPLACE_EXISTING);
 
-    setClosed();
-    try {
-      getStagingFileStream().close();
-      LiteralURI targetUri = getTargetPath();
-      getS3Client()
-          .putObject(
-              PutObjectRequest.builder()
-                  .bucket(targetUri.authority())
-                  .key(targetUri.path())
-                  .build(),
-              AsyncRequestBody.fromFile(getStagingFile()))
-          .get();
-    } catch (ExecutionException | InterruptedException e) {
-      throw new StorageWriteFailureException(
-          e, "Fail to upload to %s from staging file: %s", getTargetPath(), getStagingFile());
-    }
+    LiteralURI targetUri = getTargetPath();
+    PutObjectRequest.Builder requestBuilder =
+        PutObjectRequest.builder().bucket(targetUri.authority()).key(targetUri.path());
+
+    uploadToS3(requestBuilder);
   }
 }

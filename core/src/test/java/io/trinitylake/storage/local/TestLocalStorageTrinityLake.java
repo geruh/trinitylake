@@ -11,25 +11,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trinitylake;
+package io.trinitylake.storage.local;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
+import io.trinitylake.TrinityLake;
+import io.trinitylake.TrinityLakeTests;
 import io.trinitylake.relocated.com.google.common.collect.ImmutableMap;
 import io.trinitylake.storage.BasicLakehouseStorage;
 import io.trinitylake.storage.CommonStorageOpsProperties;
 import io.trinitylake.storage.LakehouseStorage;
 import io.trinitylake.storage.LiteralURI;
-import io.trinitylake.storage.local.LocalStorageOps;
-import io.trinitylake.storage.local.LocalStorageOpsProperties;
-import io.trinitylake.tree.TreeOperations;
-import io.trinitylake.tree.TreeRoot;
 import java.io.File;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class TestTrinityLakeCreation {
+public class TestLocalStorageTrinityLake extends TrinityLakeTests {
 
   @TempDir private File tempDir;
 
@@ -47,14 +42,12 @@ public class TestTrinityLakeCreation {
         new BasicLakehouseStorage(
             new LiteralURI("file://" + tempDir),
             new LocalStorageOps(props, LocalStorageOpsProperties.instance()));
+
+    TrinityLake.createLakehouse(storage, LAKEHOUSE_DEF);
   }
 
-  @Test
-  public void testCreateLakehouse() {
-    TrinityLake.createLakehouse(storage, ObjectDefinitions.newLakehouseDefBuilder().build());
-    assertThat(storage.exists(FileLocations.LATEST_VERSION_HINT_FILE_PATH)).isTrue();
-    TreeRoot root = TreeOperations.findLatestRoot(storage);
-    assertThat(root.previousRootNodeFilePath().isPresent()).isFalse();
-    assertThat(root.path().get()).isEqualTo(FileLocations.rootNodeFilePath(0));
+  @Override
+  protected LakehouseStorage storage() {
+    return storage;
   }
 }

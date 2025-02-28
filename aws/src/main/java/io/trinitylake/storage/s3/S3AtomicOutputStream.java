@@ -14,14 +14,12 @@
 package io.trinitylake.storage.s3;
 
 import io.trinitylake.exception.CommitFailureException;
-import io.trinitylake.exception.StorageWriteFailureException;
 import io.trinitylake.storage.AtomicOutputStream;
 import io.trinitylake.storage.CommonStorageOpsProperties;
 import io.trinitylake.storage.LiteralURI;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
-import java.util.concurrent.ExecutionException;
-import software.amazon.awssdk.core.async.AsyncRequestBody;
+import java.nio.file.Files;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
@@ -30,38 +28,23 @@ class S3AtomicOutputStream extends AtomicOutputStream {
 
   S3AtomicOutputStream(
       S3AsyncClient s3,
-      LiteralURI uri,
+      LiteralURI localUri,
+      LiteralURI s3Uri,
       CommonStorageOpsProperties commonProperties,
       AmazonS3StorageOpsProperties s3Properties) {
     this.delegate =
-        new S3StagingOutputStream(s3, uri, commonProperties, s3Properties) {
+        new S3StagingOutputStream(s3, localUri, s3Uri, commonProperties, s3Properties) {
           @Override
           protected void commit() throws IOException {
-            if (isClosed()) {
-              return;
-            }
-            setClosed();
-            try {
-              getStagingFileStream().close();
-              LiteralURI targetURI = getTargetPath();
-              getS3Client()
-                  .putObject(
-                      PutObjectRequest.builder()
-                          .bucket(targetURI.authority())
-                          .key(targetURI.path())
-                          .ifNoneMatch("*")
-                          .build(),
-                      AsyncRequestBody.fromFile(getStagingFile()))
-                  .get();
-            } catch (ExecutionException | InterruptedException e) {
-              throw new StorageWriteFailureException(
-                  e,
-                  "Fail to upload to %s from staging file: %s",
-                  getTargetPath(),
-                  getStagingFile());
-            } finally {
-              cleanUpStagingFile();
-            }
+            createParentDirectories();
+            Files.move(getStagingFilePath(), getTargetFilePath());
+            LiteralURI targetURI = getTargetPath();
+            PutObjectRequest.Builder requestBuilder =
+                PutObjectRequest.builder()
+                    .bucket(targetURI.authority())
+                    .key(targetURI.path())
+                    .ifNoneMatch("*");
+            uploadToS3(requestBuilder);
           }
         };
   }
@@ -83,15 +66,11 @@ class S3AtomicOutputStream extends AtomicOutputStream {
 
   @Override
   public void atomicallySeal() throws CommitFailureException, IOException {
-    if (delegate.isClosed()) {
-      return;
-    }
     delegate.close();
   }
 
   @Override
   public FileChannel channel() {
-    // TODO: pass temp file channel here
-    return null;
+    return delegate.getChannel();
   }
 }
