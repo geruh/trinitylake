@@ -56,7 +56,7 @@ message ViewDef {
   string id = 1;
   bool schema_binding = 2;
   Schema schema = 3;
-  repeated SQLRepresentation sql_representations = 4;
+  bytes substrait_read_rel = 4;
   repeated FullName referenced_object_full_names = 5;
   map<string, string> properties = 6;
 }
@@ -89,12 +89,6 @@ message Column {
   Column map_key = 7;
   Column map_value = 8;
   Column list_element = 9;
-}
-
-message SQLRepresentation {
-  string type = 1;
-  string sql = 2;
-  string dialect = 3;
 }
 
 enum DataType {

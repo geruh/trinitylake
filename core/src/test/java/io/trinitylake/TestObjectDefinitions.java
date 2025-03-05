@@ -15,9 +15,11 @@ package io.trinitylake;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.substrait.proto.NamedStruct;
+import io.substrait.proto.ReadRel;
+import io.substrait.proto.Rel;
 import io.trinitylake.models.LakehouseDef;
 import io.trinitylake.models.NamespaceDef;
-import io.trinitylake.models.SQLRepresentation;
 import io.trinitylake.models.TableDef;
 import io.trinitylake.models.ViewDef;
 import io.trinitylake.relocated.com.google.common.collect.ImmutableMap;
@@ -49,12 +51,14 @@ public class TestObjectDefinitions {
   private final ViewDef testViewDef =
       ObjectDefinitions.newViewDefBuilder()
           .setSchemaBinding(false)
-          .addSqlRepresentations(
-              SQLRepresentation.newBuilder()
-                  .setType("sql")
-                  .setSql("select 'foo' foo")
-                  .setDialect("spark-sql")
-                  .build())
+          .setSubstraitReadRel(
+              Rel.newBuilder()
+                  .setRead(
+                      ReadRel.newBuilder()
+                          .setBaseSchema(NamedStruct.newBuilder().addNames("table1").build())
+                          .build())
+                  .build()
+                  .toByteString())
           .putProperties("k1", "v1")
           .build();
 

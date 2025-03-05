@@ -29,6 +29,7 @@ dependencies {
     implementation "org.apache.iceberg:iceberg-core:1.8.0"
     // TODO: figure out what is the common practice, if this should be compileOnly or implementation
     implementation "org.apache.arrow:arrow-memory-netty:18.1.0"
+    implementation "io.substrait:core:0.48.0"
     testImplementation "org.apache.iceberg:iceberg-api:1.8.0:tests"
     testImplementation "org.apache.iceberg:iceberg-core:1.8.0:tests"
     testImplementation "org.apache.hadoop:hadoop-client:3.4.1"
