@@ -16,6 +16,7 @@ package io.trinitylake.tree;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.trinitylake.FileLocations;
+import io.trinitylake.relocated.com.google.common.collect.Lists;
 import io.trinitylake.storage.BasicLakehouseStorage;
 import io.trinitylake.storage.LakehouseStorage;
 import io.trinitylake.storage.LiteralURI;
@@ -23,6 +24,9 @@ import io.trinitylake.storage.local.LocalStorageOps;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -49,10 +53,10 @@ public class TestTreeOperations {
 
     TreeRoot root = TreeOperations.readRootNodeFile(storage, "testWriteReadRootNodeFile.arrow");
     assertThat(
-            treeRoot.nodeKeyTable().stream()
+            TreeOperations.getNodeKeyTable(storage, treeRoot).stream()
                 .collect(Collectors.toMap(NodeKeyTableRow::key, NodeKeyTableRow::value)))
         .isEqualTo(
-            root.nodeKeyTable().stream()
+            TreeOperations.getNodeKeyTable(storage, root).stream()
                 .collect(Collectors.toMap(NodeKeyTableRow::key, NodeKeyTableRow::value)));
   }
 
@@ -122,5 +126,81 @@ public class TestTreeOperations {
     assertThat(root.previousRootNodeFilePath().isPresent()).isFalse();
 
     assertThat(roots.hasNext()).isFalse();
+  }
+
+  @Test
+  public void testMergePersistedAndPendingChanges(@TempDir Path tempDir) {
+    LocalStorageOps ops = new LocalStorageOps();
+    LakehouseStorage storage = new BasicLakehouseStorage(new LiteralURI("file://" + tempDir), ops);
+
+    TreeRoot treeRoot = new BasicTreeRoot();
+    treeRoot.setLakehouseDefFilePath("some/path/to/lakehouse/def");
+    treeRoot.set("key1", "val1");
+    treeRoot.set("key2", "val2");
+    treeRoot.set("key3", "val3");
+    treeRoot.set("key4", "delete");
+
+    String path = "testMergeChanges.arrow";
+    TreeOperations.writeRootNodeFile(storage, path, treeRoot);
+    TreeRoot loadedRoot = TreeOperations.readRootNodeFile(storage, path);
+
+    loadedRoot.set("pending_key5", "val5");
+    loadedRoot.set("key3", "modified");
+    loadedRoot.set("key4", null);
+
+    List<NodeKeyTableRow> mergedTable = TreeOperations.getNodeKeyTable(storage, loadedRoot);
+    Map<String, Optional<String>> mergedMap =
+        mergedTable.stream()
+            .collect(Collectors.toMap(NodeKeyTableRow::key, NodeKeyTableRow::value));
+
+    assertThat(mergedMap).containsKey("key1");
+    assertThat(mergedMap.get("key1").get()).isEqualTo("val1");
+
+    assertThat(mergedMap).containsKey("key2");
+    assertThat(mergedMap.get("key2").get()).isEqualTo("val2");
+
+    assertThat(mergedMap).containsKey("pending_key5");
+    assertThat(mergedMap.get("pending_key5").get()).isEqualTo("val5");
+
+    assertThat(mergedMap).containsKey("key3");
+    assertThat(mergedMap.get("key3").get()).isEqualTo("modified");
+
+    assertThat(mergedMap).doesNotContainKey("key4");
+  }
+
+  @Test
+  public void testKeySortingInNodeKeyTable(@TempDir Path tempDir) {
+    LocalStorageOps ops = new LocalStorageOps();
+    LakehouseStorage storage = new BasicLakehouseStorage(new LiteralURI("file://" + tempDir), ops);
+
+    TreeRoot treeRoot = new BasicTreeRoot();
+    treeRoot.setLakehouseDefFilePath("some/path/to/lakehouse/def");
+
+    treeRoot.set("b_key", "b_value");
+    treeRoot.set("a_key", "a_value");
+    treeRoot.set("c_key", "c_value");
+
+    String path = "testSorting.arrow";
+    TreeOperations.writeRootNodeFile(storage, path, treeRoot);
+    TreeRoot loadedRoot = TreeOperations.readRootNodeFile(storage, path);
+
+    // add pending changes
+    loadedRoot.set("f_key", "f_value");
+    loadedRoot.set("d_key", "d_value");
+    loadedRoot.set("e_key", "e_value");
+
+    List<NodeKeyTableRow> keyTable = TreeOperations.getNodeKeyTable(storage, loadedRoot);
+    List<String> actualOrder =
+        keyTable.stream().map(NodeKeyTableRow::key).collect(Collectors.toList());
+
+    List<String> expectedOrder =
+        Lists.newArrayList("a_key", "b_key", "c_key", "d_key", "e_key", "f_key");
+    assertThat(actualOrder).isEqualTo(expectedOrder);
+
+    for (int i = 1; i < actualOrder.size(); i++) {
+      String prevKey = actualOrder.get(i - 1);
+      String currentKey = actualOrder.get(i);
+      assertThat(currentKey).isGreaterThan(prevKey);
+    }
   }
 }

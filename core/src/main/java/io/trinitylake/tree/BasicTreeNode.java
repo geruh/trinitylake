@@ -15,18 +15,18 @@ package io.trinitylake.tree;
 
 import io.trinitylake.relocated.com.google.common.collect.Maps;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 public class BasicTreeNode implements TreeNode {
 
-  private final Map<String, String> values;
+  private final TreeMap<String, String> pendingChanges;
   private String path;
   private Long createdAtMillis;
 
   public BasicTreeNode() {
-    this.values = Maps.newHashMap();
+    this.pendingChanges = Maps.newTreeMap();
   }
 
   @Override
@@ -61,28 +61,43 @@ public class BasicTreeNode implements TreeNode {
 
   @Override
   public int numKeys() {
-    return values.size();
+    return pendingChanges.size();
   }
 
   @Override
   public NodeSearchResult search(String key) {
-    return ImmutableNodeSearchResult.builder().value(Optional.ofNullable(values.get(key))).build();
+    if (pendingChanges.containsKey(key)) {
+      String value = pendingChanges.get(key);
+      return ImmutableNodeSearchResult.builder()
+          .value(Optional.ofNullable(value))
+          .nodePointer(Optional.empty())
+          .build();
+    }
+    return ImmutableNodeSearchResult.builder()
+        .value(Optional.empty())
+        .nodePointer(Optional.empty())
+        .build();
   }
 
   @Override
   public void set(String key, String value) {
-    values.put(key, value);
+    pendingChanges.put(key, value);
   }
 
   @Override
   public void remove(String key) {
-    values.remove(key);
+    pendingChanges.remove(key);
   }
 
   @Override
-  public List<NodeKeyTableRow> nodeKeyTable() {
-    return values.entrySet().stream()
-        .map(e -> ImmutableNodeKeyTableRow.builder().key(e.getKey()).value(e.getValue()).build())
+  public List<NodeKeyTableRow> pendingChanges() {
+    return pendingChanges.entrySet().stream()
+        .map(
+            e ->
+                ImmutableNodeKeyTableRow.builder()
+                    .key(e.getKey())
+                    .value(Optional.ofNullable(e.getValue()))
+                    .build())
         .collect(Collectors.toList());
   }
 }

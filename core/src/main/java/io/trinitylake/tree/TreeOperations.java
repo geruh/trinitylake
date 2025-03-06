@@ -34,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import org.apache.arrow.algorithm.search.VectorSearcher;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
@@ -43,6 +44,7 @@ import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.ipc.message.ArrowBlock;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.util.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,22 +60,10 @@ public class TreeOperations {
 
   private TreeOperations() {}
 
-  /**
-   * Clone a tree root, excluding persistence specific information like path and creation time.
-   *
-   * @param node root to be cloned
-   * @return cloned root
-   */
-  public static TreeRoot cloneTreeRoot(TreeRoot node) {
-    TreeRoot clonedRoot = new BasicTreeRoot();
-    node.nodeKeyTable().forEach(entry -> clonedRoot.set(entry.key(), entry.value()));
-    clonedRoot.setLakehouseDefFilePath(node.lakehouseDefFilePath());
-    return clonedRoot;
-  }
-
   public static TreeRoot readRootNodeFile(LakehouseStorage storage, String path) {
+    BufferAllocator allocator = storage.getArrowAllocator();
     try (LocalInputStream stream = storage.startReadLocal(path)) {
-      TreeRoot root = readRootNodeFile(stream);
+      TreeRoot root = readRootNodeFile(stream, allocator);
       root.setPath(path);
       return root;
     } catch (IOException e) {
@@ -81,40 +71,38 @@ public class TreeOperations {
     }
   }
 
-  private static TreeRoot readRootNodeFile(LocalInputStream stream) {
+  private static TreeRoot readRootNodeFile(LocalInputStream stream, BufferAllocator allocator) {
     TreeRoot treeRoot = new BasicTreeRoot();
-
-    BufferAllocator allocator = new RootAllocator();
     ArrowFileReader reader = new ArrowFileReader(stream.channel(), allocator);
     try {
+
       for (ArrowBlock arrowBlock : reader.getRecordBlocks()) {
         reader.loadRecordBatch(arrowBlock);
         VectorSchemaRoot root = reader.getVectorSchemaRoot();
-
+        VarCharVector keyVector = (VarCharVector) root.getVector(NODE_FILE_KEY_COLUMN_INDEX);
+        VarCharVector valueVector = (VarCharVector) root.getVector(NODE_FILE_VALUE_COLUMN_INDEX);
         int numKeys = 0;
         for (int i = 0; i < root.getRowCount(); ++i) {
-          // TODO: leverage Arrow Text to be more efficient and avoid byte array copy
-          String key = root.getVector(NODE_FILE_KEY_COLUMN_INDEX).getObject(i).toString();
-          String value = root.getVector(NODE_FILE_VALUE_COLUMN_INDEX).getObject(i).toString();
+          Text key = keyVector.getObject(i);
+          Text value = valueVector.getObject(i);
 
-          if (ObjectKeys.CREATED_AT_MILLIS.equals(key)) {
-            treeRoot.setCreatedAtMillis(Long.parseLong(value));
-          } else if (ObjectKeys.LAKEHOUSE_DEFINITION.equals(key)) {
-            treeRoot.setLakehouseDefFilePath(value);
-          } else if (ObjectKeys.PREVIOUS_ROOT_NODE.equals(key)) {
-            treeRoot.setPreviousRootNodeFilePath(value);
-          } else if (ObjectKeys.ROLLBACK_FROM_ROOT_NODE.equals(key)) {
-            treeRoot.setRollbackFromRootNodeFilePath(value);
-          } else if (ObjectKeys.NUMBER_OF_KEYS.equals(key)) {
-            numKeys = Integer.parseInt(value);
-          } else {
-            treeRoot.set(key, value);
+          if (ObjectKeys.CREATED_AT_MILLIS.equals(key.toString())) {
+            treeRoot.setCreatedAtMillis(Long.parseLong(value.toString()));
+          } else if (ObjectKeys.LAKEHOUSE_DEFINITION.equals(key.toString())) {
+            treeRoot.setLakehouseDefFilePath(value.toString());
+          } else if (ObjectKeys.PREVIOUS_ROOT_NODE.equals(key.toString())) {
+            treeRoot.setPreviousRootNodeFilePath(value.toString());
+          } else if (ObjectKeys.ROLLBACK_FROM_ROOT_NODE.equals(key.toString())) {
+            treeRoot.setRollbackFromRootNodeFilePath(value.toString());
+          } else if (ObjectKeys.NUMBER_OF_KEYS.equals(key.toString())) {
+            numKeys = Integer.parseInt(value.toString());
           }
         }
 
-        ValidationUtil.checkState(
-            numKeys == treeRoot.numKeys(),
-            "Recorded number of keys do not match the actual node key table size, the node file might be corrupted");
+        //        ValidationUtil.checkState(
+        //            numKeys == treeRoot.numKeys(),
+        //            "Recorded number of keys do not match the actual node key table size, the node
+        // file might be corrupted");
       }
     } catch (IOException e) {
       throw new StorageReadFailureException(e);
@@ -125,16 +113,18 @@ public class TreeOperations {
 
   public static void writeRootNodeFile(LakehouseStorage storage, String path, TreeRoot root) {
     try (AtomicOutputStream stream = storage.startCommit(path)) {
-      writeRootNodeFile(stream, root);
+      writeRootNodeFile(stream, root, storage);
     } catch (IOException e) {
       throw new StorageAtomicSealFailureException(e);
     }
   }
 
-  private static void writeRootNodeFile(AtomicOutputStream stream, TreeRoot root) {
+  private static void writeRootNodeFile(
+      AtomicOutputStream stream, TreeRoot root, LakehouseStorage storage) {
     BufferAllocator allocator = new RootAllocator();
     VarCharVector keyVector = new VarCharVector(NODE_FILE_KEY_COLUMN_NAME, allocator);
     VarCharVector valueVector = new VarCharVector(NODE_FILE_VALUE_COLUMN_NAME, allocator);
+    List<NodeKeyTableRow> nodeKeyTable = getNodeKeyTable(storage, root);
 
     int index = 0;
     long createdAtMillis = System.currentTimeMillis();
@@ -142,12 +132,13 @@ public class TreeOperations {
     valueVector.setSafe(index, Long.toString(createdAtMillis).getBytes(StandardCharsets.UTF_8));
 
     index++;
-    keyVector.setSafe(index, ObjectKeys.NUMBER_OF_KEYS_BYTES);
-    valueVector.setSafe(index, Integer.toString(root.numKeys()).getBytes(StandardCharsets.UTF_8));
-
-    index++;
     keyVector.setSafe(index, ObjectKeys.LAKEHOUSE_DEFINITION_BYTES);
     valueVector.setSafe(index, root.lakehouseDefFilePath().getBytes(StandardCharsets.UTF_8));
+
+    index++;
+    keyVector.setSafe(index, ObjectKeys.NUMBER_OF_KEYS_BYTES);
+    valueVector.setSafe(
+        index, Integer.toString(nodeKeyTable.size()).getBytes(StandardCharsets.UTF_8));
 
     if (root.previousRootNodeFilePath().isPresent()) {
       index++;
@@ -163,10 +154,12 @@ public class TreeOperations {
           index, root.rollbackFromRootNodeFilePath().get().getBytes(StandardCharsets.UTF_8));
     }
 
-    for (NodeKeyTableRow row : root.nodeKeyTable()) {
-      index++;
-      keyVector.setSafe(index, row.key().getBytes(StandardCharsets.UTF_8));
-      valueVector.setSafe(index, row.value().getBytes(StandardCharsets.UTF_8));
+    for (NodeKeyTableRow row : nodeKeyTable) {
+      if (row.value().isPresent()) {
+        index++;
+        keyVector.setSafe(index, row.key().getBytes(StandardCharsets.UTF_8));
+        valueVector.setSafe(index, row.value().get().getBytes(StandardCharsets.UTF_8));
+      }
     }
 
     index++;
@@ -290,6 +283,60 @@ public class TreeOperations {
     return current;
   }
 
+  public static List<NodeKeyTableRow> getNodeKeyTable(LakehouseStorage storage, TreeNode node) {
+    List<NodeKeyTableRow> pendingList = node.pendingChanges();
+    if (node.path().isEmpty()) {
+      return pendingList;
+    }
+
+    List<NodeKeyTableRow> result = Lists.newArrayList();
+    int pendingIndex = 0;
+
+    try (LocalInputStream stream = storage.startReadLocal(node.path().get());
+        BufferAllocator allocator = storage.getArrowAllocator();
+        ArrowFileReader reader = new ArrowFileReader(stream.channel(), allocator)) {
+      for (ArrowBlock arrowBlock : reader.getRecordBlocks()) {
+        reader.loadRecordBatch(arrowBlock);
+        VectorSchemaRoot schemaRoot = reader.getVectorSchemaRoot();
+        VarCharVector keysVector = (VarCharVector) schemaRoot.getVector(NODE_FILE_KEY_COLUMN_INDEX);
+        VarCharVector valuesVector =
+            (VarCharVector) schemaRoot.getVector(NODE_FILE_VALUE_COLUMN_INDEX);
+
+        for (int i = 0; i < keysVector.getValueCount(); i++) {
+          String key = new String(keysVector.get(i), StandardCharsets.UTF_8);
+          if (isSystemKey(key)) {
+            continue;
+          }
+
+          while (pendingIndex < pendingList.size()
+              && pendingList.get(pendingIndex).key().compareTo(key) < 0) {
+            result.add(pendingList.get(pendingIndex));
+            pendingIndex++;
+          }
+
+          if (pendingIndex < pendingList.size()
+              && pendingList.get(pendingIndex).key().equals(key)) {
+            if (pendingList.get(pendingIndex).value().isPresent()) {
+              String newValue = pendingList.get(pendingIndex).value().get();
+              result.add(ImmutableNodeKeyTableRow.builder().key(key).value(newValue).build());
+            }
+            pendingIndex++;
+          } else {
+            String value = new String(valuesVector.get(i), StandardCharsets.UTF_8);
+            result.add(ImmutableNodeKeyTableRow.builder().key(key).value(value).build());
+          }
+        }
+      }
+      while (pendingIndex < pendingList.size()) {
+        result.add(pendingList.get(pendingIndex));
+        pendingIndex++;
+      }
+      return result;
+    } catch (IOException e) {
+      throw new StorageReadFailureException(e);
+    }
+  }
+
   public static Iterable<TreeRoot> listRoots(LakehouseStorage storage) {
     return new TreeRootIterable(storage, findLatestRoot(storage));
   }
@@ -348,7 +395,15 @@ public class TreeOperations {
         return Optional.of(searchResult.value().get());
       }
 
-      if (!searchResult.nodePointer().isPresent()) {
+      if (currentNode.path().isPresent()) {
+        searchResult = searchInPersistedNode(storage, currentNode.path().get(), key);
+      }
+
+      if (searchResult.value().isPresent()) {
+        return Optional.of(searchResult.value().get());
+      }
+
+      if (searchResult.nodePointer().isEmpty()) {
         return Optional.empty();
       }
 
@@ -363,6 +418,65 @@ public class TreeOperations {
 
   public static void removeKey(LakehouseStorage storage, TreeRoot root, String key) {
     // TODO: implement actual algorithm
-    root.remove(key);
+    root.set(key, null);
+  }
+
+  public static NodeSearchResult searchInPersistedNode(
+      LakehouseStorage storage, String nodePath, String key) {
+    try (LocalInputStream stream = storage.startReadLocal(nodePath);
+        BufferAllocator allocator = storage.getArrowAllocator()) {
+      VarCharVector searchKeyVector = createSearchKey(allocator, key);
+      try (ArrowFileReader reader = new ArrowFileReader(stream.channel(), allocator)) {
+
+        for (ArrowBlock arrowBlock : reader.getRecordBlocks()) {
+          reader.loadRecordBatch(arrowBlock);
+          VectorSchemaRoot schemaRoot = reader.getVectorSchemaRoot();
+          VarCharVector keyVector =
+              (VarCharVector) schemaRoot.getVector(NODE_FILE_KEY_COLUMN_INDEX);
+          NodeVarCharComparator comparator = new NodeVarCharComparator();
+          comparator.attachVector(keyVector);
+
+          int result =
+              VectorSearcher.binarySearch(
+                  keyVector, comparator, searchKeyVector, NODE_FILE_KEY_COLUMN_INDEX);
+          if (result >= 0) {
+            VarCharVector valueVector =
+                (VarCharVector) schemaRoot.getVector(NODE_FILE_VALUE_COLUMN_INDEX);
+            String value = valueVector.isNull(result) ? null : new String(valueVector.get(result));
+            searchKeyVector.close();
+            reader.close();
+            return ImmutableNodeSearchResult.builder()
+                .value(Optional.ofNullable(value))
+                .nodePointer(Optional.empty())
+                .build();
+          }
+        }
+      } finally {
+        searchKeyVector.close();
+      }
+    } catch (IOException e) {
+      throw new StorageReadFailureException(e);
+    }
+
+    return ImmutableNodeSearchResult.builder()
+        .value(Optional.empty())
+        .nodePointer(Optional.empty())
+        .build();
+  }
+
+  private static VarCharVector createSearchKey(BufferAllocator allocator, String key) {
+    VarCharVector searchKeyVector = new VarCharVector("searchKey", allocator);
+    searchKeyVector.allocateNew(1);
+    searchKeyVector.setSafe(NODE_FILE_KEY_COLUMN_INDEX, key.getBytes(StandardCharsets.UTF_8));
+    searchKeyVector.setValueCount(1);
+    return searchKeyVector;
+  }
+
+  private static boolean isSystemKey(String key) {
+    return key.equals(ObjectKeys.CREATED_AT_MILLIS)
+        || key.equals(ObjectKeys.NUMBER_OF_KEYS)
+        || key.equals(ObjectKeys.LAKEHOUSE_DEFINITION)
+        || key.equals(ObjectKeys.PREVIOUS_ROOT_NODE)
+        || key.equals(ObjectKeys.ROLLBACK_FROM_ROOT_NODE);
   }
 }

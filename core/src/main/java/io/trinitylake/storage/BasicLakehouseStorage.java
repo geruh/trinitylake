@@ -13,14 +13,21 @@
  */
 package io.trinitylake.storage;
 
+import java.io.IOException;
+import java.util.UUID;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+
 public class BasicLakehouseStorage implements LakehouseStorage {
 
   private final LiteralURI root;
   private final StorageOps ops;
+  private final BufferAllocator bufferAllocator;
 
   public BasicLakehouseStorage(LiteralURI root, StorageOps ops) {
     this.ops = ops;
     this.root = root;
+    this.bufferAllocator = new RootAllocator();
   }
 
   @Override
@@ -31,5 +38,17 @@ public class BasicLakehouseStorage implements LakehouseStorage {
   @Override
   public StorageOps ops() {
     return ops;
+  }
+
+  @Override
+  public BufferAllocator getArrowAllocator() {
+    // TODO: figure out best allocation size
+    return bufferAllocator.newChildAllocator(String.valueOf(UUID.randomUUID()), 0, 1024 * 1024);
+  }
+
+  @Override
+  public void close() throws IOException {
+    ops().close();
+    bufferAllocator.close();
   }
 }
