@@ -13,6 +13,7 @@
  */
 package io.trinitylake.tree;
 
+import java.util.Optional;
 import org.immutables.value.Value;
 
 @Value.Immutable
@@ -20,5 +21,5 @@ public interface NodeKeyTableRow {
 
   String key();
 
-  String value();
+  Optional<String> value();
 }

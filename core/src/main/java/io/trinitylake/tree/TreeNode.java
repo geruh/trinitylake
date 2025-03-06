@@ -54,5 +54,5 @@ public interface TreeNode extends Serializable {
 
   void remove(String key);
 
-  List<NodeKeyTableRow> nodeKeyTable();
+  List<NodeKeyTableRow> pendingChanges();
 }

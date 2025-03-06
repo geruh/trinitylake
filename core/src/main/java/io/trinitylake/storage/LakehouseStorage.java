@@ -20,6 +20,7 @@ import java.io.OutputStream;
 import java.io.Serializable;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.apache.arrow.memory.BufferAllocator;
 
 /**
  * A Lakehouse storage starts with a root URI location. Most access to the lakehouse storage should
@@ -30,6 +31,8 @@ public interface LakehouseStorage extends Closeable, Serializable {
   LiteralURI root();
 
   StorageOps ops();
+
+  BufferAllocator getArrowAllocator();
 
   default void prepareToReadLocal(String path) {
     ops().prepareToReadLocal(root().extendPath(path));

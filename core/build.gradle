@@ -24,11 +24,12 @@ dependencies {
     implementation 'com.google.protobuf:protobuf-java:4.28.3'
     implementation 'dev.failsafe:failsafe:3.3.2'
     implementation "com.github.ben-manes.caffeine:caffeine:2.9.3"
-    implementation "org.apache.arrow:arrow-vector:18.1.0"
+    implementation libs.arrow.vector
+    implementation libs.arrow.algorithm
     implementation "org.apache.iceberg:iceberg-api:1.8.0"
     implementation "org.apache.iceberg:iceberg-core:1.8.0"
     // TODO: figure out what is the common practice, if this should be compileOnly or implementation
-    implementation "org.apache.arrow:arrow-memory-netty:18.1.0"
+    implementation libs.arrow.memory.netty
     implementation "io.substrait:core:0.48.0"
     testImplementation "org.apache.iceberg:iceberg-api:1.8.0:tests"
     testImplementation "org.apache.iceberg:iceberg-core:1.8.0:tests"
